@@ -1,1 +1,1 @@
-export { default } from './lib/UserGroupsModule.js';
+export { default } from './lib/UserGroupsModule.js'
