@@ -518,12 +518,7 @@ describe('UserGroupsModule.prototype.init', () => {
 })
 
 describe('UserGroupsModule delete return value', () => {
-  // TODO: Bug - delete() returns cleanup results instead of the deleted document.
-  // The parent AbstractApiModule.delete() returns the original document, but
-  // UserGroupsModule.delete() discards it and returns Promise.all([...]) results
-  // (an array of arrays of undefined). Callers expecting the deleted document
-  // will receive the wrong value.
-  it('should return a promise that resolves to an array of per-module results', async () => {
+  it('should return the deleted document after cleanup', async () => {
     const deletedId = 'groupReturn'
     const mockModule = {
       find: mock.fn(async () => [{ _id: 'doc1' }]),
@@ -537,8 +532,9 @@ describe('UserGroupsModule delete return value', () => {
     const superDelete = mock.fn(async () => ({ _id: deletedId }))
 
     const deleteMethod = async function (...args) {
-      const { _id } = await superDelete(...args)
-      return Promise.all(this.modules.map(async m => {
+      const result = await superDelete(...args)
+      const { _id } = result
+      await Promise.all(this.modules.map(async m => {
         const docs = await m.find({ userGroups: _id })
         return Promise.all(docs.map(async d => {
           try {
@@ -548,12 +544,11 @@ describe('UserGroupsModule delete return value', () => {
           }
         }))
       }))
+      return result
     }
 
     const result = await deleteMethod.call(instance, { _id: deletedId })
 
-    assert.ok(Array.isArray(result))
-    assert.equal(result.length, 1)
-    assert.ok(Array.isArray(result[0]))
+    assert.equal(result._id, deletedId)
   })
 })
