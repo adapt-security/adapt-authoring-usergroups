@@ -20,16 +20,5 @@
     "adapt-authoring-core": "^1.7.0",
     "adapt-authoring-jsonschema": "^1.2.0",
     "adapt-authoring-users": "^1.0.2"
-  },
-  "peerDependenciesMeta": {
-    "adapt-authoring-core": {
-      "optional": true
-    },
-    "adapt-authoring-jsonschema": {
-      "optional": true
-    },
-    "adapt-authoring-users": {
-      "optional": true
-    }
   }
 }
