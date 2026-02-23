@@ -14,7 +14,7 @@
     "standard": "^17.1.0"
   },
   "dependencies": {
-    "adapt-authoring-api": "^1.3.2"
+    "adapt-authoring-api": "^2.0.3"
   },
   "peerDependencies": {
     "adapt-authoring-core": "^1.7.0",
