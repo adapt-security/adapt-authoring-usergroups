@@ -46,38 +46,25 @@ describe('UserGroupsModule', () => {
 
 describe('UserGroupsModule.prototype.setValues', () => {
   let instance
-  let useDefaultRouteConfigCalled
 
   beforeEach(() => {
-    useDefaultRouteConfigCalled = false
-
     // Create a minimal instance that mimics the class shape
     // without needing the full AbstractModule constructor chain
     instance = Object.create({
       setValues: null,
-      useDefaultRouteConfig: function () {
-        useDefaultRouteConfigCalled = true
-      },
       log: mock.fn()
     })
 
-    // Import the prototype method
+    // Import the prototype method (without super.setValues — that is tested via routes.json)
     const proto = {
       async setValues () {
-        this.root = 'usergroups'
         this.schemaName = 'usergroup'
         this.schemaExtensionName = 'usergroups'
         this.collectionName = 'usergroups'
         this.modules = []
-        this.useDefaultRouteConfig()
       }
     }
     instance.setValues = proto.setValues.bind(instance)
-  })
-
-  it('should set root to "usergroups"', async () => {
-    await instance.setValues()
-    assert.equal(instance.root, 'usergroups')
   })
 
   it('should set schemaName to "usergroup"', async () => {
@@ -99,11 +86,6 @@ describe('UserGroupsModule.prototype.setValues', () => {
     await instance.setValues()
     assert.deepEqual(instance.modules, [])
     assert.ok(Array.isArray(instance.modules))
-  })
-
-  it('should call useDefaultRouteConfig', async () => {
-    await instance.setValues()
-    assert.equal(useDefaultRouteConfigCalled, true)
   })
 })
 
