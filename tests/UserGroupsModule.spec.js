@@ -89,6 +89,17 @@ describe('UserGroupsModule.prototype.setValues', () => {
   })
 })
 
+/** Extracted registerModule logic (tested in isolation without super) */
+async function registerModule (mod) {
+  if (!mod.schemaName) {
+    return this.log('warn', 'cannot register module, module doesn\'t define a schemaName')
+  }
+  const jsonschema = await this.app.waitForModule('jsonschema')
+  jsonschema.extendSchema(mod.schemaName, this.schemaExtensionName)
+  this.log('debug', `registered ${mod.name} for use with usergroups`)
+  this.modules.push(mod)
+}
+
 describe('UserGroupsModule.prototype.registerModule', () => {
   let instance
   let mockApp
@@ -109,19 +120,7 @@ describe('UserGroupsModule.prototype.registerModule', () => {
   })
 
   it('should log a warning if mod has no schemaName', async () => {
-    const mod = {}
-    // Extract the registerModule logic
-    const registerModule = async function (mod) {
-      if (!mod.schemaName) {
-        return this.log('warn', 'cannot register module, module doesn\'t define a schemaName')
-      }
-      const jsonschema = await this.app.waitForModule('jsonschema')
-      jsonschema.extendSchema(mod.schemaName, this.schemaExtensionName)
-      this.log('debug', `registered ${mod.name} for use with usergroups`)
-      this.modules.push(mod)
-    }
-
-    await registerModule.call(instance, mod)
+    await registerModule.call(instance, {})
 
     assert.equal(logCalls.length, 1)
     assert.equal(logCalls[0][0], 'warn')
@@ -130,19 +129,7 @@ describe('UserGroupsModule.prototype.registerModule', () => {
   })
 
   it('should log a warning if mod.schemaName is empty string', async () => {
-    const mod = { schemaName: '' }
-
-    const registerModule = async function (mod) {
-      if (!mod.schemaName) {
-        return this.log('warn', 'cannot register module, module doesn\'t define a schemaName')
-      }
-      const jsonschema = await this.app.waitForModule('jsonschema')
-      jsonschema.extendSchema(mod.schemaName, this.schemaExtensionName)
-      this.log('debug', `registered ${mod.name} for use with usergroups`)
-      this.modules.push(mod)
-    }
-
-    await registerModule.call(instance, mod)
+    await registerModule.call(instance, { schemaName: '' })
 
     assert.equal(logCalls.length, 1)
     assert.equal(logCalls[0][0], 'warn')
@@ -158,17 +145,6 @@ describe('UserGroupsModule.prototype.registerModule', () => {
     }
 
     const mod = { schemaName: 'user', name: 'users' }
-
-    const registerModule = async function (mod) {
-      if (!mod.schemaName) {
-        return this.log('warn', 'cannot register module, module doesn\'t define a schemaName')
-      }
-      const jsonschema = await this.app.waitForModule('jsonschema')
-      jsonschema.extendSchema(mod.schemaName, this.schemaExtensionName)
-      this.log('debug', `registered ${mod.name} for use with usergroups`)
-      this.modules.push(mod)
-    }
-
     await registerModule.call(instance, mod)
 
     assert.equal(extendSchemaCalls.length, 1)
@@ -184,17 +160,6 @@ describe('UserGroupsModule.prototype.registerModule', () => {
     }
 
     const mod = { schemaName: 'user', name: 'users' }
-
-    const registerModule = async function (mod) {
-      if (!mod.schemaName) {
-        return this.log('warn', 'cannot register module, module doesn\'t define a schemaName')
-      }
-      const jsonschema = await this.app.waitForModule('jsonschema')
-      jsonschema.extendSchema(mod.schemaName, this.schemaExtensionName)
-      this.log('debug', `registered ${mod.name} for use with usergroups`)
-      this.modules.push(mod)
-    }
-
     await registerModule.call(instance, mod)
 
     assert.equal(logCalls.length, 1)
@@ -208,16 +173,6 @@ describe('UserGroupsModule.prototype.registerModule', () => {
       extendSchema: mock.fn()
     }
 
-    const registerModule = async function (mod) {
-      if (!mod.schemaName) {
-        return this.log('warn', 'cannot register module, module doesn\'t define a schemaName')
-      }
-      const jsonschema = await this.app.waitForModule('jsonschema')
-      jsonschema.extendSchema(mod.schemaName, this.schemaExtensionName)
-      this.log('debug', `registered ${mod.name} for use with usergroups`)
-      this.modules.push(mod)
-    }
-
     const mod1 = { schemaName: 'user', name: 'users' }
     const mod2 = { schemaName: 'course', name: 'courses' }
 
@@ -229,6 +184,23 @@ describe('UserGroupsModule.prototype.registerModule', () => {
     assert.equal(instance.modules[1], mod2)
   })
 })
+
+/** Extracted delete logic (tested in isolation without super) */
+function createDeleteMethod (superDelete) {
+  return async function (...args) {
+    const { _id } = await superDelete(...args)
+    return Promise.all(this.modules.map(async m => {
+      const docs = await m.find({ userGroups: _id })
+      return Promise.all(docs.map(async d => {
+        try {
+          await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
+        } catch (e) {
+          this.log('warn', `Failed to remove usergroup, ${e}`)
+        }
+      }))
+    }))
+  }
+}
 
 describe('UserGroupsModule.prototype.delete', () => {
   let instance
@@ -260,22 +232,8 @@ describe('UserGroupsModule.prototype.delete', () => {
     }
     instance.modules = [mockModule]
 
-    // Simulate the delete override logic
     const superDelete = mock.fn(async () => ({ _id: deletedId }))
-
-    const deleteMethod = async function (...args) {
-      const { _id } = await superDelete(...args)
-      return Promise.all(this.modules.map(async m => {
-        const docs = await m.find({ userGroups: _id })
-        return Promise.all(docs.map(async d => {
-          try {
-            await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
-          } catch (e) {
-            this.log('warn', `Failed to remove usergroup, ${e}`)
-          }
-        }))
-      }))
-    }
+    const deleteMethod = createDeleteMethod(superDelete)
 
     await deleteMethod.call(instance, { _id: deletedId })
 
@@ -302,20 +260,7 @@ describe('UserGroupsModule.prototype.delete', () => {
     instance.modules = [mockModule]
 
     const superDelete = mock.fn(async () => ({ _id: deletedId }))
-
-    const deleteMethod = async function (...args) {
-      const { _id } = await superDelete(...args)
-      return Promise.all(this.modules.map(async m => {
-        const docs = await m.find({ userGroups: _id })
-        return Promise.all(docs.map(async d => {
-          try {
-            await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
-          } catch (e) {
-            this.log('warn', `Failed to remove usergroup, ${e}`)
-          }
-        }))
-      }))
-    }
+    const deleteMethod = createDeleteMethod(superDelete)
 
     await deleteMethod.call(instance, { _id: deletedId })
 
@@ -328,20 +273,7 @@ describe('UserGroupsModule.prototype.delete', () => {
     instance.modules = []
 
     const superDelete = mock.fn(async () => ({ _id: deletedId }))
-
-    const deleteMethod = async function (...args) {
-      const { _id } = await superDelete(...args)
-      return Promise.all(this.modules.map(async m => {
-        const docs = await m.find({ userGroups: _id })
-        return Promise.all(docs.map(async d => {
-          try {
-            await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
-          } catch (e) {
-            this.log('warn', `Failed to remove usergroup, ${e}`)
-          }
-        }))
-      }))
-    }
+    const deleteMethod = createDeleteMethod(superDelete)
 
     const result = await deleteMethod.call(instance, { _id: deletedId })
 
@@ -366,20 +298,7 @@ describe('UserGroupsModule.prototype.delete', () => {
     instance.modules = [mockModule]
 
     const superDelete = mock.fn(async () => ({ _id: deletedId }))
-
-    const deleteMethod = async function (...args) {
-      const { _id } = await superDelete(...args)
-      return Promise.all(this.modules.map(async m => {
-        const docs = await m.find({ userGroups: _id })
-        return Promise.all(docs.map(async d => {
-          try {
-            await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
-          } catch (e) {
-            this.log('warn', `Failed to remove usergroup, ${e}`)
-          }
-        }))
-      }))
-    }
+    const deleteMethod = createDeleteMethod(superDelete)
 
     // Should not throw
     await deleteMethod.call(instance, { _id: deletedId })
@@ -411,20 +330,7 @@ describe('UserGroupsModule.prototype.delete', () => {
     instance.modules = [mockModule1, mockModule2]
 
     const superDelete = mock.fn(async () => ({ _id: deletedId }))
-
-    const deleteMethod = async function (...args) {
-      const { _id } = await superDelete(...args)
-      return Promise.all(this.modules.map(async m => {
-        const docs = await m.find({ userGroups: _id })
-        return Promise.all(docs.map(async d => {
-          try {
-            await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
-          } catch (e) {
-            this.log('warn', `Failed to remove usergroup, ${e}`)
-          }
-        }))
-      }))
-    }
+    const deleteMethod = createDeleteMethod(superDelete)
 
     await deleteMethod.call(instance, { _id: deletedId })
 
@@ -443,20 +349,7 @@ describe('UserGroupsModule.prototype.delete', () => {
     instance.modules = []
 
     const superDelete = mock.fn(async () => ({ _id: deletedId }))
-
-    const deleteMethod = async function (...args) {
-      const { _id } = await superDelete(...args)
-      return Promise.all(this.modules.map(async m => {
-        const docs = await m.find({ userGroups: _id })
-        return Promise.all(docs.map(async d => {
-          try {
-            await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
-          } catch (e) {
-            this.log('warn', `Failed to remove usergroup, ${e}`)
-          }
-        }))
-      }))
-    }
+    const deleteMethod = createDeleteMethod(superDelete)
 
     const query = { _id: deletedId }
     const options = { collectionName: 'usergroups' }
@@ -513,6 +406,7 @@ describe('UserGroupsModule delete return value', () => {
 
     const superDelete = mock.fn(async () => ({ _id: deletedId }))
 
+    // This variant returns the result (testing a slightly different impl)
     const deleteMethod = async function (...args) {
       const result = await superDelete(...args)
       const { _id } = result
