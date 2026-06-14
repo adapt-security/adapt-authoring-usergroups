@@ -1,3 +1,17 @@
 {
-  "root": "usergroups"
+  "root": "usergroups",
+  "routes": [
+    {
+      "route": "/counts",
+      "modifying": false,
+      "handlers": { "get": "getCounts" },
+      "permissions": { "get": ["read:${scope}"] },
+      "meta": {
+        "get": {
+          "summary": "Member counts per user group",
+          "description": "Returns a map of group id to the number of users in that group."
+        }
+      }
+    }
+  ]
 }

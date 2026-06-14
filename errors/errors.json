@@ -1,0 +1,9 @@
+{
+  "DUPL_USERGROUP": {
+    "data": {
+      "displayName": "Display name of the user group"
+    },
+    "description": "A user group already exists with the passed display name",
+    "statusCode": 400
+  }
+}
