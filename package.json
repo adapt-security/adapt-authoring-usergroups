@@ -10,7 +10,11 @@
   "scripts": {
     "test": "node --test 'tests/**/*.spec.js'"
   },
+  "release": {
+    "extends": "@adaptlearning/semantic-release-config"
+  },
   "devDependencies": {
+    "@adaptlearning/semantic-release-config": "^1.0.0",
     "standard": "^17.1.0"
   },
   "dependencies": {

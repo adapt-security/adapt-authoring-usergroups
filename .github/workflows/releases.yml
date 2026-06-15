@@ -1,0 +1,17 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+  packages: write
+
+jobs:
+  release:
+    uses: adaptlearning/semantic-release-config/.github/workflows/release.yml@master
