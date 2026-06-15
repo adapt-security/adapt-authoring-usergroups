@@ -13,7 +13,8 @@
           "items": {
             "type": "string",
             "isObjectId": true
-          }
+          },
+          "_adapt": { "inputType": "UserGroups" }
         }
       }
     }
