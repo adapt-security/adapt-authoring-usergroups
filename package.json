@@ -1,6 +1,6 @@
 {
   "name": "adapt-authoring-usergroups",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Module for managing group of users",
   "homepage": "https://github.com/adapt-security/adapt-authoring-usergroups",
   "license": "GPL-3.0",
