@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$anchor": "usergroups",
-  "description": "Properties related to user group sharing",
+  "description": "Group memberships for a user",
   "type": "object",
   "$patch": {
     "source": { "$ref": "user" },
     "with": {
       "properties": {
         "userGroups": {
-          "description": "User groups the target object should be accessible to",
+          "description": "User groups this user belongs to",
           "type": "array",
           "items": {
             "type": "string",

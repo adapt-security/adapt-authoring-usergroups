@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$anchor": "groups",
+  "description": "Adds a groups grant key to the generic _access object, sharing a resource with user groups",
+  "$merge": {
+    "with": {
+      "properties": {
+        "_access": {
+          "type": "object",
+          "properties": {
+            "groups": {
+              "description": "Ids of the user groups the resource is shared with",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string",
+                "isObjectId": true
+              },
+              "_adapt": {
+                "inputType": "Principal",
+                "options": {
+                  "apiRoot": "usergroups",
+                  "labelField": "displayName",
+                  "kind": "group"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
