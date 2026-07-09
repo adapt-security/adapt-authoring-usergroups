@@ -1,430 +1,161 @@
 import { describe, it, mock, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
+import UserGroupsModule from '../lib/UserGroupsModule.js'
 
-/**
- * Helper to create a minimal mock app instance
- */
-function createMockApp () {
-  const modules = {}
-  return {
-    waitForModule: mock.fn(async (name) => modules[name]),
-    config: {
-      get: mock.fn(() => 50)
-    },
-    errors: {
-      NO_ROOT_OR_ROUTER_DEF: new Error('NO_ROOT_OR_ROUTER_DEF'),
-      NO_ROUTES_DEF: new Error('NO_ROUTES_DEF'),
-      NO_COLL_NAME: new Error('NO_COLL_NAME'),
-      NOT_FOUND: {
-        setData: (data) => Object.assign(new Error('NOT_FOUND'), { data })
-      }
-    },
-    _modules: modules
-  }
+/** A fake instance backed by the real prototype, without the AbstractModule constructor chain */
+function fakeInstance (extendSchema) {
+  const inst = Object.create(UserGroupsModule.prototype)
+  inst.log = mock.fn()
+  inst.modules = []
+  inst.membershipExtension = 'usergroups'
+  inst.grantExtension = 'groups'
+  inst.app = { waitForModule: mock.fn(async () => ({ extendSchema })) }
+  return inst
 }
 
-/**
- * We dynamically import UserGroupsModule and stub its parent
- * AbstractApiModule to avoid needing the full app framework.
- */
+function fakeMod (schemaName, name) {
+  const taps = { check: [], query: [] }
+  return {
+    taps,
+    schemaName,
+    name,
+    accessCheckHook: { tap: fn => taps.check.push(fn) },
+    accessQueryHook: { tap: fn => taps.query.push(fn) }
+  }
+}
 
 describe('UserGroupsModule', () => {
-  let UserGroupsModule
-
-  beforeEach(async () => {
-    const mod = await import('../lib/UserGroupsModule.js')
-    UserGroupsModule = mod.default
+  it('should export a class as default', () => {
+    assert.equal(typeof UserGroupsModule, 'function')
+    assert.equal(UserGroupsModule.name, 'UserGroupsModule')
   })
 
-  describe('class definition', () => {
-    it('should export a class as default', () => {
-      assert.equal(typeof UserGroupsModule, 'function')
-      assert.equal(UserGroupsModule.name, 'UserGroupsModule')
-    })
-  })
-})
-
-describe('UserGroupsModule.prototype.setValues', () => {
-  let instance
-
-  beforeEach(() => {
-    // Create a minimal instance that mimics the class shape
-    // without needing the full AbstractModule constructor chain
-    instance = Object.create({
-      setValues: null,
-      log: mock.fn()
+  describe('#registerMembership()', () => {
+    it('should warn and not register a module with no schemaName', async () => {
+      const inst = fakeInstance()
+      await inst.registerMembership({})
+      assert.equal(inst.log.mock.calls[0].arguments[0], 'warn')
+      assert.equal(inst.modules.length, 0)
     })
 
-    // Import the prototype method (without super.setValues — that is tested via routes.json)
-    const proto = {
-      async setValues () {
-        this.schemaName = 'usergroup'
-        this.schemaExtensionName = 'usergroups'
-        this.collectionName = 'usergroups'
-        this.modules = []
-      }
-    }
-    instance.setValues = proto.setValues.bind(instance)
+    it('should extend the user schema and track userGroups for cleanup, tapping no hooks', async () => {
+      const extendSchema = mock.fn()
+      const inst = fakeInstance(extendSchema)
+      const mod = fakeMod('user', 'users')
+      await inst.registerMembership(mod)
+      assert.deepEqual(extendSchema.mock.calls[0].arguments, ['user', 'usergroups'])
+      assert.deepEqual(inst.modules, [{ mod, field: 'userGroups' }])
+      assert.equal(mod.taps.check.length, 0)
+      assert.equal(mod.taps.query.length, 0)
+    })
   })
 
-  it('should set schemaName to "usergroup"', async () => {
-    await instance.setValues()
-    assert.equal(instance.schemaName, 'usergroup')
+  describe('#registerGroupModule()', () => {
+    it('should extend with the groups grant, tap both hooks, and track _access.groups', async () => {
+      const extendSchema = mock.fn()
+      const inst = fakeInstance(extendSchema)
+      const mod = fakeMod('asset', 'assets')
+      await inst.registerGroupModule(mod)
+      assert.deepEqual(extendSchema.mock.calls[0].arguments, ['asset', 'groups'])
+      assert.equal(mod.taps.check[0], UserGroupsModule.prototype.checkGroupAccess)
+      assert.equal(mod.taps.query[0], UserGroupsModule.prototype.grantGroupAccess)
+      assert.deepEqual(inst.modules, [{ mod, field: '_access.groups' }])
+    })
   })
 
-  it('should set schemaExtensionName to "usergroups"', async () => {
-    await instance.setValues()
-    assert.equal(instance.schemaExtensionName, 'usergroups')
+  describe('#registerCourseGroups()', () => {
+    it('should extend the course schema and track content, tapping no hooks on content', async () => {
+      const extendSchema = mock.fn()
+      const inst = fakeInstance(extendSchema)
+      const content = fakeMod('content', 'content')
+      await inst.registerCourseGroups(content)
+      assert.deepEqual(extendSchema.mock.calls[0].arguments, ['course', 'groups'])
+      assert.deepEqual(inst.modules, [{ mod: content, field: '_access.groups' }])
+      assert.equal(content.taps.check.length, 0)
+      assert.equal(content.taps.query.length, 0)
+    })
   })
 
-  it('should set collectionName to "usergroups"', async () => {
-    await instance.setValues()
-    assert.equal(instance.collectionName, 'usergroups')
+  describe('#checkGroupAccess()', () => {
+    const check = UserGroupsModule.prototype.checkGroupAccess
+    it('should grant when the resource shares a group with the user', () => {
+      assert.equal(check({ auth: { user: { userGroups: ['g1', 'g2'] } } }, { _access: { groups: ['g2'] } }), true)
+    })
+    it('should not grant without overlap', () => {
+      assert.equal(check({ auth: { user: { userGroups: ['g1'] } } }, { _access: { groups: ['g2'] } }), false)
+    })
+    it('should not grant when the resource is shared with no groups', () => {
+      assert.equal(check({ auth: { user: { userGroups: ['g1'] } } }, {}), false)
+    })
   })
 
-  it('should initialise modules as an empty array', async () => {
-    await instance.setValues()
-    assert.deepEqual(instance.modules, [])
-    assert.ok(Array.isArray(instance.modules))
-  })
-})
-
-/** Extracted registerModule logic (tested in isolation without super) */
-async function registerModule (mod) {
-  if (!mod.schemaName) {
-    return this.log('warn', 'cannot register module, module doesn\'t define a schemaName')
-  }
-  const jsonschema = await this.app.waitForModule('jsonschema')
-  jsonschema.extendSchema(mod.schemaName, this.schemaExtensionName)
-  this.log('debug', `registered ${mod.name} for use with usergroups`)
-  this.modules.push(mod)
-}
-
-describe('UserGroupsModule.prototype.registerModule', () => {
-  let instance
-  let mockApp
-  let logCalls
-
-  beforeEach(() => {
-    mockApp = createMockApp()
-    logCalls = []
-
-    instance = {
-      modules: [],
-      schemaExtensionName: 'usergroups',
-      app: mockApp,
-      log: function (...args) {
-        logCalls.push(args)
-      }
-    }
+  describe('#grantGroupAccess()', () => {
+    const grant = UserGroupsModule.prototype.grantGroupAccess
+    it('should widen the query with the user groups', () => {
+      const query = {}
+      grant({ auth: { user: { userGroups: ['g1', 'g2'] } }, apiData: { query } })
+      assert.deepEqual(query.$or, [{ '_access.groups': { $in: ['g1', 'g2'] } }])
+    })
+    it('should be a no-op when the user belongs to no groups', () => {
+      const query = {}
+      grant({ auth: { user: { userGroups: [] } }, apiData: { query } })
+      assert.deepEqual(query, {})
+    })
   })
 
-  it('should log a warning if mod has no schemaName', async () => {
-    await registerModule.call(instance, {})
-
-    assert.equal(logCalls.length, 1)
-    assert.equal(logCalls[0][0], 'warn')
-    assert.ok(logCalls[0][1].includes('schemaName'))
-    assert.equal(instance.modules.length, 0)
-  })
-
-  it('should log a warning if mod.schemaName is empty string', async () => {
-    await registerModule.call(instance, { schemaName: '' })
-
-    assert.equal(logCalls.length, 1)
-    assert.equal(logCalls[0][0], 'warn')
-    assert.equal(instance.modules.length, 0)
-  })
-
-  it('should register a module with a valid schemaName', async () => {
-    const extendSchemaCalls = []
-    mockApp._modules.jsonschema = {
-      extendSchema: function (schemaName, extensionName) {
-        extendSchemaCalls.push({ schemaName, extensionName })
-      }
-    }
-
-    const mod = { schemaName: 'user', name: 'users' }
-    await registerModule.call(instance, mod)
-
-    assert.equal(extendSchemaCalls.length, 1)
-    assert.equal(extendSchemaCalls[0].schemaName, 'user')
-    assert.equal(extendSchemaCalls[0].extensionName, 'usergroups')
-    assert.equal(instance.modules.length, 1)
-    assert.equal(instance.modules[0], mod)
-  })
-
-  it('should log debug message with module name after registering', async () => {
-    mockApp._modules.jsonschema = {
-      extendSchema: mock.fn()
-    }
-
-    const mod = { schemaName: 'user', name: 'users' }
-    await registerModule.call(instance, mod)
-
-    assert.equal(logCalls.length, 1)
-    assert.equal(logCalls[0][0], 'debug')
-    assert.ok(logCalls[0][1].includes('users'))
-    assert.ok(logCalls[0][1].includes('usergroups'))
-  })
-
-  it('should allow registering multiple modules', async () => {
-    mockApp._modules.jsonschema = {
-      extendSchema: mock.fn()
-    }
-
-    const mod1 = { schemaName: 'user', name: 'users' }
-    const mod2 = { schemaName: 'course', name: 'courses' }
-
-    await registerModule.call(instance, mod1)
-    await registerModule.call(instance, mod2)
-
-    assert.equal(instance.modules.length, 2)
-    assert.equal(instance.modules[0], mod1)
-    assert.equal(instance.modules[1], mod2)
-  })
-})
-
-/** Extracted delete logic (tested in isolation without super) */
-function createDeleteMethod (superDelete) {
-  return async function (...args) {
-    const { _id } = await superDelete(...args)
-    return Promise.all(this.modules.map(async m => {
-      const docs = await m.find({ userGroups: _id })
-      return Promise.all(docs.map(async d => {
-        try {
-          await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
-        } catch (e) {
-          this.log('warn', `Failed to remove usergroup, ${e}`)
-        }
-      }))
-    }))
-  }
-}
-
-describe('UserGroupsModule.prototype.delete', () => {
-  let instance
-  let logCalls
-
-  beforeEach(() => {
-    logCalls = []
-
-    instance = {
-      modules: [],
-      log: function (...args) {
-        logCalls.push(args)
-      }
-    }
-  })
-
-  it('should remove usergroup reference from all registered module documents', async () => {
-    const deletedId = 'group123'
-    const updateCalls = []
-
-    const mockModule = {
-      find: mock.fn(async () => [
-        { _id: 'doc1', userGroups: [deletedId, 'other'] },
-        { _id: 'doc2', userGroups: [deletedId] }
-      ]),
-      update: mock.fn(async (query, data, opts) => {
-        updateCalls.push({ query, data, opts })
-      })
-    }
-    instance.modules = [mockModule]
-
-    const superDelete = mock.fn(async () => ({ _id: deletedId }))
-    const deleteMethod = createDeleteMethod(superDelete)
-
-    await deleteMethod.call(instance, { _id: deletedId })
-
-    assert.equal(superDelete.mock.callCount(), 1)
-    assert.equal(mockModule.find.mock.callCount(), 1)
-    assert.deepEqual(mockModule.find.mock.calls[0].arguments[0], { userGroups: deletedId })
-    assert.equal(mockModule.update.mock.callCount(), 2)
-
-    assert.deepEqual(updateCalls[0].query, { _id: 'doc1' })
-    assert.deepEqual(updateCalls[0].data, { $pull: { userGroups: deletedId } })
-    assert.deepEqual(updateCalls[0].opts, { rawUpdate: true })
-
-    assert.deepEqual(updateCalls[1].query, { _id: 'doc2' })
-    assert.deepEqual(updateCalls[1].data, { $pull: { userGroups: deletedId } })
-    assert.deepEqual(updateCalls[1].opts, { rawUpdate: true })
-  })
-
-  it('should handle empty documents list gracefully', async () => {
-    const deletedId = 'group456'
-    const mockModule = {
-      find: mock.fn(async () => []),
-      update: mock.fn()
-    }
-    instance.modules = [mockModule]
-
-    const superDelete = mock.fn(async () => ({ _id: deletedId }))
-    const deleteMethod = createDeleteMethod(superDelete)
-
-    await deleteMethod.call(instance, { _id: deletedId })
-
-    assert.equal(mockModule.find.mock.callCount(), 1)
-    assert.equal(mockModule.update.mock.callCount(), 0)
-  })
-
-  it('should handle no registered modules', async () => {
-    const deletedId = 'group789'
-    instance.modules = []
-
-    const superDelete = mock.fn(async () => ({ _id: deletedId }))
-    const deleteMethod = createDeleteMethod(superDelete)
-
-    const result = await deleteMethod.call(instance, { _id: deletedId })
-
-    assert.equal(superDelete.mock.callCount(), 1)
-    assert.deepEqual(result, [])
-  })
-
-  it('should log warning and continue when update fails', async () => {
-    const deletedId = 'group-err'
-    const updateError = new Error('DB write failed')
-
-    const mockModule = {
-      find: mock.fn(async () => [
-        { _id: 'doc1' },
-        { _id: 'doc2' }
-      ]),
-      update: mock.fn(async (query) => {
-        if (query._id === 'doc1') throw updateError
-        // doc2 succeeds
-      })
-    }
-    instance.modules = [mockModule]
-
-    const superDelete = mock.fn(async () => ({ _id: deletedId }))
-    const deleteMethod = createDeleteMethod(superDelete)
-
-    // Should not throw
-    await deleteMethod.call(instance, { _id: deletedId })
-
-    assert.equal(logCalls.length, 1)
-    assert.equal(logCalls[0][0], 'warn')
-    assert.ok(logCalls[0][1].includes('Failed to remove usergroup'))
-    assert.ok(logCalls[0][1].includes('DB write failed'))
-    // update was still called for both docs
-    assert.equal(mockModule.update.mock.callCount(), 2)
-  })
-
-  it('should process multiple modules independently', async () => {
-    const deletedId = 'groupMulti'
-    const updateCalls = []
-
-    const mockModule1 = {
-      find: mock.fn(async () => [{ _id: 'mod1doc1' }]),
-      update: mock.fn(async (query, data, opts) => {
-        updateCalls.push({ module: 'mod1', query, data, opts })
-      })
-    }
-    const mockModule2 = {
-      find: mock.fn(async () => [{ _id: 'mod2doc1' }, { _id: 'mod2doc2' }]),
-      update: mock.fn(async (query, data, opts) => {
-        updateCalls.push({ module: 'mod2', query, data, opts })
-      })
-    }
-    instance.modules = [mockModule1, mockModule2]
-
-    const superDelete = mock.fn(async () => ({ _id: deletedId }))
-    const deleteMethod = createDeleteMethod(superDelete)
-
-    await deleteMethod.call(instance, { _id: deletedId })
-
-    assert.equal(mockModule1.find.mock.callCount(), 1)
-    assert.equal(mockModule2.find.mock.callCount(), 1)
-    assert.equal(updateCalls.length, 3)
-
-    const mod1Updates = updateCalls.filter(c => c.module === 'mod1')
-    const mod2Updates = updateCalls.filter(c => c.module === 'mod2')
-    assert.equal(mod1Updates.length, 1)
-    assert.equal(mod2Updates.length, 2)
-  })
-
-  it('should pass through arguments to super.delete', async () => {
-    const deletedId = 'groupArgs'
-    instance.modules = []
-
-    const superDelete = mock.fn(async () => ({ _id: deletedId }))
-    const deleteMethod = createDeleteMethod(superDelete)
-
-    const query = { _id: deletedId }
-    const options = { collectionName: 'usergroups' }
-    await deleteMethod.call(instance, query, options)
-
-    assert.equal(superDelete.mock.callCount(), 1)
-    assert.deepEqual(superDelete.mock.calls[0].arguments[0], query)
-    assert.deepEqual(superDelete.mock.calls[0].arguments[1], options)
-  })
-})
-
-describe('UserGroupsModule.prototype.init', () => {
-  it('should register the users module on init', async () => {
-    const registerModuleCalls = []
-    const usersModule = { schemaName: 'user', name: 'users' }
-
-    const instance = {
-      app: {
-        waitForModule: mock.fn(async (name) => {
-          if (name === 'users') return usersModule
-          return {}
-        })
-      },
-      registerModule: mock.fn(async (mod) => {
-        registerModuleCalls.push(mod)
-      })
-    }
-
-    // Simulate the init logic (without super.init)
-    const initLogic = async function () {
-      this.registerModule(await this.app.waitForModule('users'))
-    }
-
-    await initLogic.call(instance)
-
-    assert.equal(instance.app.waitForModule.mock.callCount(), 1)
-    assert.equal(instance.app.waitForModule.mock.calls[0].arguments[0], 'users')
-    assert.equal(instance.registerModule.mock.callCount(), 1)
-    assert.equal(registerModuleCalls[0], usersModule)
-  })
-})
-
-describe('UserGroupsModule delete return value', () => {
-  it('should return the deleted document after cleanup', async () => {
-    const deletedId = 'groupReturn'
-    const mockModule = {
-      find: mock.fn(async () => [{ _id: 'doc1' }]),
-      update: mock.fn(async () => {})
-    }
-    const instance = {
-      modules: [mockModule],
-      log: mock.fn()
-    }
-
-    const superDelete = mock.fn(async () => ({ _id: deletedId }))
-
-    // This variant returns the result (testing a slightly different impl)
-    const deleteMethod = async function (...args) {
-      const result = await superDelete(...args)
-      const { _id } = result
-      await Promise.all(this.modules.map(async m => {
-        const docs = await m.find({ userGroups: _id })
-        return Promise.all(docs.map(async d => {
-          try {
-            await m.update({ _id: d._id }, { $pull: { userGroups: _id } }, { rawUpdate: true })
-          } catch (e) {
-            this.log('warn', `Failed to remove usergroup, ${e}`)
-          }
+  describe('#delete() cascade cleanup', () => {
+    /* the real delete calls super.delete, so exercise the field-aware cascade in isolation */
+    function cascade (superDelete) {
+      return async function (...args) {
+        const doc = await superDelete(...args)
+        await Promise.all(this.modules.map(async ({ mod, field }) => {
+          const docs = await mod.find({ [field]: doc._id })
+          return Promise.all(docs.map(async d => {
+            try {
+              await mod.update({ _id: d._id }, { $pull: { [field]: doc._id } }, { rawUpdate: true })
+            } catch (e) {
+              this.log('warn', `Failed to remove usergroup, ${e}`)
+            }
+          }))
         }))
-      }))
-      return result
+        return doc
+      }
     }
 
-    const result = await deleteMethod.call(instance, { _id: deletedId })
+    let logCalls
+    beforeEach(() => { logCalls = [] })
 
-    assert.equal(result._id, deletedId)
+    it('should pull the deleted group id from each module using its tracked field', async () => {
+      const calls = []
+      const users = {
+        find: mock.fn(async () => [{ _id: 'u1' }]),
+        update: mock.fn(async (q, d) => calls.push({ field: 'userGroups', q, d }))
+      }
+      const assets = {
+        find: mock.fn(async () => [{ _id: 'a1' }]),
+        update: mock.fn(async (q, d) => calls.push({ field: '_access.groups', q, d }))
+      }
+      const inst = {
+        log: (...a) => logCalls.push(a),
+        modules: [{ mod: users, field: 'userGroups' }, { mod: assets, field: '_access.groups' }]
+      }
+      await cascade(mock.fn(async () => ({ _id: 'g1' }))).call(inst, { _id: 'g1' })
+
+      assert.deepEqual(users.find.mock.calls[0].arguments[0], { userGroups: 'g1' })
+      assert.deepEqual(assets.find.mock.calls[0].arguments[0], { '_access.groups': 'g1' })
+      assert.deepEqual(calls[0].d, { $pull: { userGroups: 'g1' } })
+      assert.deepEqual(calls[1].d, { $pull: { '_access.groups': 'g1' } })
+    })
+
+    it('should warn and continue when an update fails', async () => {
+      const assets = {
+        find: mock.fn(async () => [{ _id: 'a1' }]),
+        update: mock.fn(async () => { throw new Error('boom') })
+      }
+      const inst = { log: (...a) => logCalls.push(a), modules: [{ mod: assets, field: '_access.groups' }] }
+      await cascade(mock.fn(async () => ({ _id: 'g1' }))).call(inst, { _id: 'g1' })
+      assert.equal(logCalls[0][0], 'warn')
+      assert.ok(logCalls[0][1].includes('boom'))
+    })
   })
 })
